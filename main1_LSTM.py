@@ -39,45 +39,29 @@ def parse_seizure_summary(file_path):
         i += 1
     return seizures
 
-# Convert valid data into 1-second interval
-def slice_data(data, sfreq, max_sec=None):
+def slice_data(data, sfreq, delta, interval, offset=5, seq_len=60):
     n_channels, total_len = data.shape
     total_seconds = total_len // sfreq
-    total_minutes = total_seconds // 60
-    if max_sec:
-        total_seconds = min(total_seconds, max_sec)
-    # result = np.zeros((total_seconds, n_channels, sfreq))
-    result = np.zeros((total_minutes, n_channels, 60 * sfreq))
-    for i in range(total_minutes):
-        start_sample = i * sfreq * 60
-        end_sample = (i + 1) * sfreq * 60
-        result[i] = data[:, start_sample:end_sample]
-    return result
+    n_datas = total_seconds - seq_len
+    slice_data = np.zeros((n_datas, seq_len, n_channels, sfreq))
+    label = np.zeros(n_datas)
+    for i in range(n_datas):
+        for j in range(seq_len):
+            slice_data[i][j] = data[:, (i + j) * sfreq : (i + j + 1) * sfreq]
+            if  ((i * seq_len) + j > delta + offset) and ((i * seq_len) + j < delta + interval - offset):
+                label[i] = 1
+    return slice_data, label
 
-def generate_dataset(seizure_info, data_dir):
+def generate_dataset(seizure_info, data_dir, delta=100, offset=5, seq_len=60):
     datas, labels = [], []
     for seizure in seizure_info:        
         data, sfreq = load_edf(data_dir + seizure['file_name'])
         interval = seizure['seizure_end_time'] - seizure['seizure_start_time']
-        delta = interval // 2
+        # delta = interval // 2
         valid_seconds = interval + delta * 2
-        front_data = data[:, (seizure['seizure_start_time'] - 1000) * int(sfreq) : (seizure['seizure_start_time'] - 1000 + delta) * int(sfreq)]
-        mid_data = data[:, seizure['seizure_start_time'] * int(sfreq) : seizure['seizure_end_time'] * int(sfreq)]
-        end_data = data[:, (seizure['seizure_end_time'] + 1000) * int(sfreq) : (seizure['seizure_end_time'] + 1000 + delta) * int(sfreq)]
-
-        d = [front_data, mid_data, end_data]
-        valid_data = np.concatenate(d, axis=1)
-        slice_datas = slice_data(valid_data, int(sfreq))
-        
-        # Fix: Create labels that match the number of minutes, not seconds
-        valid_minutes = valid_seconds // 60
-        label = np.zeros(valid_minutes)
-        
-        # Convert second-based indices to minute-based indices
-        delta_minutes = delta // 60
-        interval_minutes = interval // 60
-        label[delta_minutes : delta_minutes + interval_minutes] = 1
-        
+        valid_data = data[:, (seizure['seizure_start_time'] - delta) * int(sfreq) : (seizure['seizure_end_time'] + delta) * int(sfreq)]
+        slice_datas, label = slice_data(valid_data, int(sfreq), delta, interval, offset, seq_len)        
+       
         labels.append(label)
         datas.append(slice_datas)
         print(f'\n{seizure["file_name"]}\tvalid_data.shape = {valid_data.shape}\tslice_data.shape = {slice_datas.shape}\tlabel.shape = {label.shape}\n')
@@ -137,15 +121,16 @@ def create_simple_nn(in_channels=23, in_length=256):
     model = keras.Model(inputs=inputs, outputs=x)
     return model
 
-def create_lstm_model(in_channels=23, in_length=256):
+def create_lstm_model(seq_len=60, n_channels=23, sfreq=256):
     """
     Create LSTM model for seizure detection
-    Input shape: (batch_size, channels, length)
+    Input shape: (batch_size, seq_len, n_channels, sfreq)
     """
-    inputs = keras.Input(shape=(in_channels, in_length))
+    inputs = keras.Input(shape=(seq_len, n_channels, sfreq))
     
-    # Transpose to get (batch_size, length, channels) for LSTM
-    x = layers.Permute((2, 1))(inputs)
+    # Reshape to flatten the channel and frequency dimensions
+    # From (batch_size, seq_len, n_channels, sfreq) to (batch_size, seq_len, n_channels*sfreq)
+    x = layers.Reshape((seq_len, n_channels * sfreq))(inputs)
     
     # LSTM layers
     x = layers.LSTM(128, return_sequences=True, dropout=0.2)(x)
@@ -172,18 +157,18 @@ def main():
 
     # generate dataset
     data_dir = 'data_org/'
-    merged_datas, merged_labels = generate_dataset(seizure_info, data_dir)
+    merged_datas, merged_labels = generate_dataset(seizure_info, data_dir, delta=100, offset=1, seq_len=60)
     print(f'merged_datas: {merged_datas.shape}\tmerged_labels: {merged_labels.shape}')
 
 
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import classification_report, confusion_matrix
 
-    X_train, X_test, y_train, y_test = train_test_split(merged_datas, merged_labels, stratify=merged_labels, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(merged_datas, merged_labels, stratify=None, test_size=0.2, shuffle=False)
 
     # Create and compile the model
     # model = create_simple_nn(in_channels=X_train.shape[1], in_length=X_train.shape[2])
-    model = create_lstm_model(in_channels=X_train.shape[1], in_length=X_train.shape[2])
+    model = create_lstm_model(seq_len=X_train.shape[1], n_channels=X_train.shape[2], sfreq=X_train.shape[3])
     model.compile(
         optimizer='adam',
         loss='binary_crossentropy',
@@ -197,7 +182,7 @@ def main():
     history = model.fit(
         X_train, y_train,
         batch_size=16,
-        epochs=100,
+        epochs=10,
         validation_split=0.2,
         verbose=1
     )
