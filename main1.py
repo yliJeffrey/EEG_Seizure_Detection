@@ -43,15 +43,19 @@ def parse_seizure_summary(file_path):
 def slice_data(data, sfreq, max_sec=None):
     n_channels, total_len = data.shape
     total_seconds = total_len // sfreq
-    total_minutes = total_seconds // 60
+    # total_minutes = total_seconds // 60
     if max_sec:
         total_seconds = min(total_seconds, max_sec)
-    # result = np.zeros((total_seconds, n_channels, sfreq))
-    result = np.zeros((total_minutes, n_channels, 60 * sfreq))
-    for i in range(total_minutes):
-        start_sample = i * sfreq * 60
-        end_sample = (i + 1) * sfreq * 60
+    result = np.zeros((total_seconds, n_channels, sfreq))
+    # result = np.zeros((total_minutes, n_channels, 60 * sfreq))
+    for i in range(total_seconds):
+        start_sample = i * sfreq
+        end_sample = (i + 1) * sfreq
         result[i] = data[:, start_sample:end_sample]
+    # for i in range(total_minutes):
+        # start_sample = i * sfreq * 60
+        # end_sample = (i + 1) * sfreq * 60
+        # result[i] = data[:, start_sample:end_sample]
     return result
 
 def generate_dataset(seizure_info, data_dir):
@@ -61,22 +65,25 @@ def generate_dataset(seizure_info, data_dir):
         interval = seizure['seizure_end_time'] - seizure['seizure_start_time']
         delta = interval // 2
         valid_seconds = interval + delta * 2
-        front_data = data[:, (seizure['seizure_start_time'] - 1000) * int(sfreq) : (seizure['seizure_start_time'] - 1000 + delta) * int(sfreq)]
+        front_data = data[:, (seizure['seizure_start_time'] - 100) * int(sfreq) : (seizure['seizure_start_time'] - 100 + delta) * int(sfreq)]
         mid_data = data[:, seizure['seizure_start_time'] * int(sfreq) : seizure['seizure_end_time'] * int(sfreq)]
-        end_data = data[:, (seizure['seizure_end_time'] + 1000) * int(sfreq) : (seizure['seizure_end_time'] + 1000 + delta) * int(sfreq)]
+        end_data = data[:, (seizure['seizure_end_time'] + 100) * int(sfreq) : (seizure['seizure_end_time'] + 100 + delta) * int(sfreq)]
 
         d = [front_data, mid_data, end_data]
         valid_data = np.concatenate(d, axis=1)
         slice_datas = slice_data(valid_data, int(sfreq))
+
+        label = np.zeros(valid_seconds)
+        label[delta : delta + interval] = 1
         
-        # Fix: Create labels that match the number of minutes, not seconds
-        valid_minutes = valid_seconds // 60
-        label = np.zeros(valid_minutes)
+        # # Fix: Create labels that match the number of minutes, not seconds
+        # valid_minutes = valid_seconds // 60
+        # label = np.zeros(valid_minutes)
         
-        # Convert second-based indices to minute-based indices
-        delta_minutes = delta // 60
-        interval_minutes = interval // 60
-        label[delta_minutes : delta_minutes + interval_minutes] = 1
+        # # Convert second-based indices to minute-based indices
+        # delta_minutes = delta // 60
+        # interval_minutes = interval // 60
+        # label[delta_minutes : delta_minutes + interval_minutes] = 1
         
         labels.append(label)
         datas.append(slice_datas)
@@ -85,9 +92,6 @@ def generate_dataset(seizure_info, data_dir):
     merged_datas = np.concatenate(datas, axis=0)   
     merged_labels = np.concatenate(labels, axis=0)
     return merged_datas, merged_labels
-
-
-
 
 
 import tensorflow as tf

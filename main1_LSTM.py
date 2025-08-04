@@ -45,14 +45,17 @@ def slice_data(data, sfreq, delta, interval, offset=5, seq_len=60):
     n_datas = total_seconds - seq_len
     slice_data = np.zeros((n_datas, seq_len, n_channels, sfreq))
     label = np.zeros(n_datas)
+    count = 0
     for i in range(n_datas):
         for j in range(seq_len):
             slice_data[i][j] = data[:, (i + j) * sfreq : (i + j + 1) * sfreq]
-            if  ((i * seq_len) + j > delta + offset) and ((i * seq_len) + j < delta + interval - offset):
-                label[i] = 1
+            # if  ((i * seq_len) + j > delta + offset) and ((i * seq_len) + j < delta + interval - offset):
+        if (i + seq_len >= delta + offset) and (i + seq_len <= delta + interval - offset):            
+            label[i] = 1
+            count += 1
     return slice_data, label
 
-def generate_dataset(seizure_info, data_dir, delta=100, offset=5, seq_len=60):
+def generate_dataset(seizure_info, data_dir, delta=100, offset=10, seq_len=60):
     datas, labels = [], []
     for seizure in seizure_info:        
         data, sfreq = load_edf(data_dir + seizure['file_name'])
@@ -157,7 +160,7 @@ def main():
 
     # generate dataset
     data_dir = 'data_org/'
-    merged_datas, merged_labels = generate_dataset(seizure_info, data_dir, delta=100, offset=1, seq_len=60)
+    merged_datas, merged_labels = generate_dataset(seizure_info, data_dir, delta=100, offset=7, seq_len=60)
     print(f'merged_datas: {merged_datas.shape}\tmerged_labels: {merged_labels.shape}')
 
 
@@ -182,7 +185,7 @@ def main():
     history = model.fit(
         X_train, y_train,
         batch_size=16,
-        epochs=10,
+        epochs=30,
         validation_split=0.2,
         verbose=1
     )
