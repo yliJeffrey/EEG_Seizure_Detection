@@ -5,7 +5,7 @@ import pickle
 import re
 
 # Define the path to your pickle file
-seizure_times_path = 'seizure_times.pkl' 
+seizure_times_path = 'seizure_times.pkl'
 
 # load the pickle file to get the seizure time (dictionary: key-filename; value-list of seizure times)
 def load_seizure_time(file_path):
@@ -22,40 +22,35 @@ def load_edf(filepath):
     # print(f'{filepath}.shape = {data.shape}\tsfreq: {sfreq}')
     return data, sfreq
 
-# def load_dataset(seizure_times):
-#     for file, seizure in seizure_times.items():
-#         file_path = 'chb-mit-scalp-eeg-database-1.0.0/' + file
-#         load_edf(file_path)
-
-def parse_seizure_summary(file_path):
-    seizures = []
-    current_file_name = None
-    with open(file_path, 'r') as f:
-        lines = f.readlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        if line.startswith("File Name:"):
-            current_file_name = line.split(": ")[1]
-            i += 1
-            continue
-        if line.startswith("Number of Seizures in File:"):
-            num_seizures = int(line.split(": ")[1])
-            if num_seizures > 0:
-                for _ in range(num_seizures):
-                    i += 1 
-                    start_time_line = lines[i].strip()
-                    start_time = int(start_time_line.split(": ")[1].split(" ")[0])
-                    i += 1 
-                    end_time_line = lines[i].strip()
-                    end_time = int(end_time_line.split(": ")[1].split(" ")[0])
-                    seizures.append({
-                        'file_name': current_file_name,
-                        'seizure_start_time': start_time,
-                        'seizure_end_time': end_time
-                    })        
-        i += 1
-    return seizures
+# def parse_seizure_summary(file_path):
+#     seizures = []
+#     current_file_name = None
+#     with open(file_path, 'r') as f:
+#         lines = f.readlines()
+#     i = 0
+#     while i < len(lines):
+#         line = lines[i].strip()
+#         if line.startswith("File Name:"):
+#             current_file_name = line.split(": ")[1]
+#             i += 1
+#             continue
+#         if line.startswith("Number of Seizures in File:"):
+#             num_seizures = int(line.split(": ")[1])
+#             if num_seizures > 0:
+#                 for _ in range(num_seizures):
+#                     i += 1 
+#                     start_time_line = lines[i].strip()
+#                     start_time = int(start_time_line.split(": ")[1].split(" ")[0])
+#                     i += 1 
+#                     end_time_line = lines[i].strip()
+#                     end_time = int(end_time_line.split(": ")[1].split(" ")[0])
+#                     seizures.append({
+#                         'file_name': current_file_name,
+#                         'seizure_start_time': start_time,
+#                         'seizure_end_time': end_time
+#                     })        
+#         i += 1
+#     return seizures
 
 def slice_data(data, sfreq, delta, interval, offset=5, seq_len=60):
     n_channels, total_len = data.shape
@@ -100,6 +95,7 @@ def generate_dataset(seizure_info, data_dir, delta=100, offset=10, seq_len=60):
 import tensorflow as tf
 from tensorflow import keras
 from keras import layers
+from keras.callbacks import EarlyStopping
 
 def create_eegnet(in_channels=23, in_length=256):
     """
@@ -167,6 +163,77 @@ def create_lstm_model(seq_len=60, n_channels=23, sfreq=256):
     model = keras.Model(inputs=inputs, outputs=x)
     return model
 
+def create_improved_lstm_model(seq_len=60, n_channels=23, sfreq=256):
+    """
+    Improved LSTM model with better architecture for seizure detection
+    """
+    inputs = keras.Input(shape=(seq_len, n_channels, sfreq))
+    
+    # Option 1: CNN feature extraction + LSTM
+    # Extract features from each time step using CNN
+    x = layers.TimeDistributed(layers.Conv1D(64, 7, activation='relu', padding='same'))(inputs)
+    x = layers.TimeDistributed(layers.BatchNormalization())(x)
+    x = layers.TimeDistributed(layers.MaxPooling1D(2))(x)
+    x = layers.TimeDistributed(layers.Conv1D(32, 5, activation='relu', padding='same'))(x)
+    x = layers.TimeDistributed(layers.BatchNormalization())(x)
+    x = layers.TimeDistributed(layers.GlobalAveragePooling1D())(x)
+    
+    # Now x has shape (batch_size, seq_len, 32)
+    
+    # Bidirectional LSTM layers
+    x = layers.Bidirectional(layers.LSTM(128, return_sequences=True, dropout=0.3, recurrent_dropout=0.3))(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Bidirectional(layers.LSTM(64, return_sequences=True, dropout=0.3, recurrent_dropout=0.3))(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Bidirectional(layers.LSTM(32, return_sequences=False, dropout=0.3, recurrent_dropout=0.3))(x)
+    
+    # Attention mechanism (simple)
+    # x = layers.Dense(64, activation='tanh')(x)
+    # attention_weights = layers.Dense(1, activation='softmax')(x)
+    # x = layers.Multiply()([x, attention_weights])
+    
+    # Dense layers with regularization
+    x = layers.Dense(64, activation='relu')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.4)(x)
+    x = layers.Dense(32, activation='relu')(x)
+    x = layers.Dropout(0.3)(x)
+    x = layers.Dense(1, activation='sigmoid')(x)
+    
+    model = keras.Model(inputs=inputs, outputs=x)
+    return model
+
+def create_cnn_lstm_hybrid(seq_len=60, n_channels=23, sfreq=256):
+    """
+    Alternative hybrid CNN-LSTM approach
+    """
+    inputs = keras.Input(shape=(seq_len, n_channels, sfreq))
+    
+    # Reshape for spatial convolution across channels
+    x = layers.Reshape((seq_len, n_channels, sfreq, 1))(inputs)
+    
+    # 3D CNN to capture spatial-temporal patterns
+    x = layers.Conv3D(32, (3, 3, 7), activation='relu', padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.MaxPooling3D((1, 1, 2))(x)
+    x = layers.Conv3D(64, (3, 3, 5), activation='relu', padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.GlobalAveragePooling3D()(x)
+    
+    # Reshape for LSTM
+    x = layers.RepeatVector(seq_len)(x)
+    
+    # LSTM layers
+    x = layers.LSTM(128, return_sequences=True, dropout=0.3)(x)
+    x = layers.LSTM(64, return_sequences=False, dropout=0.3)(x)
+    
+    # Output
+    x = layers.Dense(32, activation='relu')(x)
+    x = layers.Dropout(0.3)(x)
+    x = layers.Dense(1, activation='sigmoid')(x)
+    
+    model = keras.Model(inputs=inputs, outputs=x)
+    return model
 
 
 def main():
@@ -180,15 +247,39 @@ def main():
 
     seizure_info = load_seizure_time(seizure_times_path)
     sliced_seizure_info = {}
-    for file, seizure in seizure_info.items():
-        if re.search("^chb05/", file):
-            break
-        # if re.search("^chb24/", file):
-        #     break
-        sliced_seizure_info[file] = seizure
+    # for file, seizure in seizure_info.items():
+    #     if re.search("^chb04/", file):
+    #         break
+    #     # if re.search("^chb24/", file):
+    #     #     break
+    #     sliced_seizure_info[file] = seizure
+
+    count = 0
+    processed_folders = set()  # Keep track of which folders we've processed
+    data_dir = 'chb-mit-scalp-eeg-database-1.0.0/'
+
+    for file_name, seizure in seizure_info.items():
+        # Extract the folder name (e.g., "chb01", "chb02", etc.)
+        folder_match = re.match(r"^(chb\d+)/", file_name)
+        if folder_match:
+            folder_name = folder_match.group(1)
+            
+            # Skip if patients are too young (<3): chb06, 10, 12, 13
+            if folder_name in ["chb06", "chb10", "chb12", "chb13"]:
+                continue
+        
+            # Skip if we've already processed this folder
+            if folder_name in processed_folders:
+                continue
+            
+            sliced_seizure_info[file_name] = seizure
+
+            # Mark this folder as processed
+            processed_folders.add(folder_name)
 
 
-    # seizure_info = dict(list(seizure_info.items())[:10])   # get the first 10 patients
+
+    # sliced_seizure_info = dict(list(seizure_info.items())[:30])   # get the first 10 patients
 
     # generate dataset
     data_dir = 'chb-mit-scalp-eeg-database-1.0.0/'
@@ -203,7 +294,7 @@ def main():
 
     # Create and compile the model
     # model = create_simple_nn(in_channels=X_train.shape[1], in_length=X_train.shape[2])
-    model = create_lstm_model(seq_len=X_train.shape[1], n_channels=X_train.shape[2], sfreq=X_train.shape[3])
+    model = create_improved_lstm_model(seq_len=X_train.shape[1], n_channels=X_train.shape[2], sfreq=X_train.shape[3])
     model.compile(
         optimizer='adam',
         loss='binary_crossentropy',
@@ -213,12 +304,21 @@ def main():
     # Print model summary
     model.summary()
 
+    # Early Stopping
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=10,
+        restore_best_weights=True,
+        verbose=1
+    )
+
     # Train the model
     history = model.fit(
         X_train, y_train,
         batch_size=16,
-        epochs=30,
+        epochs=50,
         validation_split=0.2,
+        callbacks=[early_stopping],   # Early Stopping
         verbose=1
     )
 
