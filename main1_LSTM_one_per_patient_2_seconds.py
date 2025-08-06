@@ -38,7 +38,12 @@ def slice_data(data, sfreq, delta, interval, offset=5, seq_len=60):
             count += 1
     return slice_data, label
 
-# seizure_info is a dictionary: key-filename, value-list of seizure times
+
+# seizure_info (dictionary): key-filename, value-list of seizure times
+# data_dir: seizure data folder
+# delta (seconds): length for non-seizure data (before and after seizure)
+# offset (seconds): classified as seizure if at least "offset" seconds of the window overlaps a seizure
+# seq_len (seconds): length of the sliding window/interval
 def generate_dataset(seizure_info, data_dir, delta=100, offset=10, seq_len=60):
     datas, labels = [], []
     for file_name, seizure in seizure_info.items():
