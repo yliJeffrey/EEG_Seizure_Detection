@@ -1,6 +1,19 @@
 import mne
 import numpy as np
 import os
+import pickle
+import re
+
+# Define the path to your pickle file
+seizure_times_path = 'seizure_times.pkl'
+
+# load the pickle file to get the seizure time (dictionary: key-filename; value-list of seizure times)
+def load_seizure_time(file_path):
+    # 'rb' means 'read binary' mode
+    with open(file_path, 'rb') as file:
+        # Load the data from the file
+        seizure_times = pickle.load(file)
+    return seizure_times
 
 def load_edf(filepath):
     raw = mne.io.read_raw_edf(filepath)
@@ -9,48 +22,48 @@ def load_edf(filepath):
     # print(f'{filepath}.shape = {data.shape}\tsfreq: {sfreq}')
     return data, sfreq
 
-def parse_seizure_summary(file_path):
-    seizures = []
-    current_file_name = None
-    with open(file_path, 'r') as f:
-        lines = f.readlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        if line.startswith("File Name:"):
-            current_file_name = line.split(": ")[1]
-            i += 1
-            continue
-        if line.startswith("Number of Seizures in File:"):
-            num_seizures = int(line.split(": ")[1])
-            if num_seizures > 0:
-                for _ in range(num_seizures):
-                    i += 1 
-                    start_time_line = lines[i].strip()
-                    start_time = int(start_time_line.split(": ")[1].split(" ")[0])
-                    i += 1 
-                    end_time_line = lines[i].strip()
-                    end_time = int(end_time_line.split(": ")[1].split(" ")[0])
-                    seizures.append({
-                        'file_name': current_file_name,
-                        'seizure_start_time': start_time,
-                        'seizure_end_time': end_time
-                    })        
-        i += 1
-    return seizures
+# def parse_seizure_summary(file_path):
+#     seizures = []
+#     current_file_name = None
+#     with open(file_path, 'r') as f:
+#         lines = f.readlines()
+#     i = 0
+#     while i < len(lines):
+#         line = lines[i].strip()
+#         if line.startswith("File Name:"):
+#             current_file_name = line.split(": ")[1]
+#             i += 1
+#             continue
+#         if line.startswith("Number of Seizures in File:"):
+#             num_seizures = int(line.split(": ")[1])
+#             if num_seizures > 0:
+#                 for _ in range(num_seizures):
+#                     i += 1 
+#                     start_time_line = lines[i].strip()
+#                     start_time = int(start_time_line.split(": ")[1].split(" ")[0])
+#                     i += 1 
+#                     end_time_line = lines[i].strip()
+#                     end_time = int(end_time_line.split(": ")[1].split(" ")[0])
+#                     seizures.append({
+#                         'file_name': current_file_name,
+#                         'seizure_start_time': start_time,
+#                         'seizure_end_time': end_time
+#                     })        
+#         i += 1
+#     return seizures
 
-# Convert valid data into 1-second interval
+# Convert valid data into 2-second interval
 def slice_data(data, sfreq, max_sec=None):
     n_channels, total_len = data.shape
     total_seconds = total_len // sfreq
     # total_minutes = total_seconds // 60
     if max_sec:
         total_seconds = min(total_seconds, max_sec)
-    result = np.zeros((total_seconds, n_channels, sfreq))
+    result = np.zeros((total_seconds // 2, n_channels, 2 * sfreq))
     # result = np.zeros((total_minutes, n_channels, 60 * sfreq))
-    for i in range(total_seconds):
+    for i in range(0, total_seconds // 2):
         start_sample = i * sfreq
-        end_sample = (i + 1) * sfreq
+        end_sample = (i + 2) * sfreq
         result[i] = data[:, start_sample:end_sample]
     # for i in range(total_minutes):
         # start_sample = i * sfreq * 60
@@ -60,20 +73,24 @@ def slice_data(data, sfreq, max_sec=None):
 
 def generate_dataset(seizure_info, data_dir):
     datas, labels = [], []
-    for seizure in seizure_info:        
-        data, sfreq = load_edf(data_dir + seizure['file_name'])
-        interval = seizure['seizure_end_time'] - seizure['seizure_start_time']
+    for file_name, seizure in seizure_info.items():       
+        data, sfreq = load_edf(data_dir + file_name)
+        if data.shape[0] != 23:
+            continue
+        interval = seizure[0][1] - seizure[0][0]
+        if interval <= 14:
+            continue
         delta = interval // 2
         valid_seconds = interval + delta * 2
-        front_data = data[:, (seizure['seizure_start_time'] - 100) * int(sfreq) : (seizure['seizure_start_time'] - 100 + delta) * int(sfreq)]
-        mid_data = data[:, seizure['seizure_start_time'] * int(sfreq) : seizure['seizure_end_time'] * int(sfreq)]
-        end_data = data[:, (seizure['seizure_end_time'] + 100) * int(sfreq) : (seizure['seizure_end_time'] + 100 + delta) * int(sfreq)]
+        front_data = data[:, (seizure[0][0] - 100) * int(sfreq) : (seizure[0][0] - 100 + delta) * int(sfreq)]
+        mid_data = data[:, seizure[0][0] * int(sfreq) : seizure[0][1] * int(sfreq)]
+        end_data = data[:, (seizure[0][1] + 100) * int(sfreq) : (seizure[0][1] + 100 + delta) * int(sfreq)]
 
         d = [front_data, mid_data, end_data]
         valid_data = np.concatenate(d, axis=1)
         slice_datas = slice_data(valid_data, int(sfreq))
 
-        label = np.zeros(valid_seconds)
+        label = np.zeros(valid_seconds // 2)
         label[delta : delta + interval] = 1
         
         # # Fix: Create labels that match the number of minutes, not seconds
@@ -87,7 +104,7 @@ def generate_dataset(seizure_info, data_dir):
         
         labels.append(label)
         datas.append(slice_datas)
-        print(f'\n{seizure["file_name"]}\tvalid_data.shape = {valid_data.shape}\tslice_data.shape = {slice_datas.shape}\tlabel.shape = {label.shape}\n')
+        # print(f'\n{seizure["file_name"]}\tvalid_data.shape = {valid_data.shape}\tslice_data.shape = {slice_datas.shape}\tlabel.shape = {label.shape}\n')
 
     merged_datas = np.concatenate(datas, axis=0)   
     merged_labels = np.concatenate(labels, axis=0)
@@ -97,6 +114,7 @@ def generate_dataset(seizure_info, data_dir):
 import tensorflow as tf
 from tensorflow import keras
 from keras import layers
+from keras.callbacks import EarlyStopping
 
 def create_eegnet(in_channels=23, in_length=256):
     """
@@ -135,6 +153,8 @@ def create_simple_nn(in_channels=23, in_length=256):
     x = layers.Dropout(0.3)(x)
     x = layers.Dense(128, activation='relu')(x)
     x = layers.Dropout(0.3)(x)
+    x = layers.Dense(64, activation='relu')(x)
+    x = layers.Dropout(0.3)(x)
     x = layers.Dense(32, activation='relu')(x)
     x = layers.Dense(1, activation='sigmoid')(x)
     
@@ -170,13 +190,45 @@ def main():
 
     ############ START FROM HERE ############
     # get seizure intervals
-    seizure_info = parse_seizure_summary('data_org/chb01-summary.txt')
-    for seizure in seizure_info:        
-        print(f"{seizure['file_name']}: [({seizure['seizure_start_time']} ~ {seizure['seizure_end_time']})]")
+    # seizure_info = parse_seizure_summary('data_org/chb01-summary.txt')
+    # for seizure in seizure_info:        
+    #     print(f"{seizure['file_name']}: [({seizure['seizure_start_time']} ~ {seizure['seizure_end_time']})]")
+
+    seizure_info = load_seizure_time(seizure_times_path)
+    sliced_seizure_info = {}
+    # for file, seizure in seizure_info.items():
+    #     if re.search("^chb04/", file):
+    #         break
+    #     # if re.search("^chb24/", file):
+    #     #     break
+    #     sliced_seizure_info[file] = seizure
+
+    count = 0
+    processed_folders = set()  # Keep track of which folders we've processed
+    data_dir = 'chb-mit-scalp-eeg-database-1.0.0/'
+
+    for file_name, seizure in seizure_info.items():
+        # Extract the folder name (e.g., "chb01", "chb02", etc.)
+        folder_match = re.match(r"^(chb\d+)/", file_name)
+        if folder_match:
+            folder_name = folder_match.group(1)
+            
+            # Skip if patients are too young (<3): chb06, 08, 12
+            if folder_name in ["chb06", "chb10", "chb12", "chb13"]:
+                continue
+        
+            # Skip if we've already processed this folder
+            if folder_name in processed_folders:
+                continue
+            
+            sliced_seizure_info[file_name] = seizure
+
+            # Mark this folder as processed
+            processed_folders.add(folder_name)
 
     # generate dataset
-    data_dir = 'data_org/'
-    merged_datas, merged_labels = generate_dataset(seizure_info, data_dir)
+    # data_dir = 'data_org/'
+    merged_datas, merged_labels = generate_dataset(sliced_seizure_info, data_dir)
     print(f'merged_datas: {merged_datas.shape}\tmerged_labels: {merged_labels.shape}')
 
 
@@ -186,8 +238,8 @@ def main():
     X_train, X_test, y_train, y_test = train_test_split(merged_datas, merged_labels, stratify=merged_labels, test_size=0.2, random_state=42)
 
     # Create and compile the model
-    # model = create_simple_nn(in_channels=X_train.shape[1], in_length=X_train.shape[2])
-    model = create_lstm_model(in_channels=X_train.shape[1], in_length=X_train.shape[2])
+    model = create_simple_nn(in_channels=X_train.shape[1], in_length=X_train.shape[2])
+    # model = create_lstm_model(in_channels=X_train.shape[1], in_length=X_train.shape[2])
     model.compile(
         optimizer='adam',
         loss='binary_crossentropy',
@@ -197,12 +249,21 @@ def main():
     # Print model summary
     model.summary()
 
+    # Early Stopping
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=10,
+        restore_best_weights=True,
+        verbose=1
+    )
+
     # Train the model
     history = model.fit(
         X_train, y_train,
-        batch_size=16,
+        batch_size=8,
         epochs=100,
         validation_split=0.2,
+        callbacks=[early_stopping],   # Early Stopping
         verbose=1
     )
 
