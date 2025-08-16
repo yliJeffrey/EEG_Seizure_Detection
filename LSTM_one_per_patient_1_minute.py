@@ -22,36 +22,6 @@ def load_edf(filepath):
     # print(f'{filepath}.shape = {data.shape}\tsfreq: {sfreq}')
     return data, sfreq
 
-# def parse_seizure_summary(file_path):
-#     seizures = []
-#     current_file_name = None
-#     with open(file_path, 'r') as f:
-#         lines = f.readlines()
-#     i = 0
-#     while i < len(lines):
-#         line = lines[i].strip()
-#         if line.startswith("File Name:"):
-#             current_file_name = line.split(": ")[1]
-#             i += 1
-#             continue
-#         if line.startswith("Number of Seizures in File:"):
-#             num_seizures = int(line.split(": ")[1])
-#             if num_seizures > 0:
-#                 for _ in range(num_seizures):
-#                     i += 1 
-#                     start_time_line = lines[i].strip()
-#                     start_time = int(start_time_line.split(": ")[1].split(" ")[0])
-#                     i += 1 
-#                     end_time_line = lines[i].strip()
-#                     end_time = int(end_time_line.split(": ")[1].split(" ")[0])
-#                     seizures.append({
-#                         'file_name': current_file_name,
-#                         'seizure_start_time': start_time,
-#                         'seizure_end_time': end_time
-#                     })        
-#         i += 1
-#     return seizures
-
 def slice_data(data, sfreq, delta, interval, offset=5, seq_len=60):
     n_channels, total_len = data.shape
     total_seconds = total_len // sfreq
@@ -237,14 +207,6 @@ def create_cnn_lstm_hybrid(seq_len=60, n_channels=23, sfreq=256):
 
 
 def main():
-    # load_edf('data_org/chb01_03.edf')
-
-    ############ START FROM HERE ############
-    # get seizure intervals
-    # seizure_info = parse_seizure_summary('data_org/chb01-summary.txt')
-    # for seizure in seizure_info:        
-    #     print(f"{seizure['file_name']}: [({seizure['seizure_start_time']} ~ {seizure['seizure_end_time']})]")
-
     seizure_info = load_seizure_time(seizure_times_path)
     sliced_seizure_info = {}
     # for file, seizure in seizure_info.items():
@@ -276,8 +238,6 @@ def main():
 
             # Mark this folder as processed
             processed_folders.add(folder_name)
-
-
 
     # sliced_seizure_info = dict(list(seizure_info.items())[:30])   # get the first 10 patients
 
@@ -330,7 +290,6 @@ def main():
     print(confusion_matrix(y_test, y_pred_binary))
     print("\nClassification Report:")
     print(classification_report(y_test, y_pred_binary))
-
 
 
 if __name__ == "__main__":

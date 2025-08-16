@@ -1,30 +1,13 @@
 import mne
 import numpy as np
 import os
-import pickle
-
-# Define the path to your pickle file
-seizure_times_path = 'seizure_times.pkl' 
-
-# load the pickle file to get the seizure time (dictionary: key-filename; value-list of seizure times)
-def load_seizure_time(file_path):
-    # 'rb' means 'read binary' mode
-    with open(file_path, 'rb') as file:
-        # Load the data from the file
-        seizure_times = pickle.load(file)
-    return seizure_times
 
 def load_edf(filepath):
-    raw = mne.io.read_raw_edf(filepath, preload=False, verbose=False)
+    raw = mne.io.read_raw_edf(filepath)
     data = raw.get_data()
     sfreq = raw.info['sfreq']  # e.g. 256Hz
     # print(f'{filepath}.shape = {data.shape}\tsfreq: {sfreq}')
     return data, sfreq
-
-# def load_dataset(seizure_times):
-#     for file, seizure in seizure_times.items():
-#         file_path = 'chb-mit-scalp-eeg-database-1.0.0/' + file
-#         load_edf(file_path)
 
 def parse_seizure_summary(file_path):
     seizures = []
@@ -72,26 +55,26 @@ def slice_data(data, sfreq, delta, interval, offset=5, seq_len=60):
             count += 1
     return slice_data, label
 
-# seizure_info is a dictionary: key-filename, value-list of seizure times
 def generate_dataset(seizure_info, data_dir, delta=100, offset=10, seq_len=60):
     datas, labels = [], []
-    for file_name, seizure in seizure_info.items():
-        data, sfreq = load_edf(data_dir + file_name)
-        interval = seizure[0][1] - seizure[0][0]
-        if interval <= 14:
-            continue
+    for seizure in seizure_info:        
+        data, sfreq = load_edf(data_dir + seizure['file_name'])
+        interval = seizure['seizure_end_time'] - seizure['seizure_start_time']
         # delta = interval // 2
         valid_seconds = interval + delta * 2
-        valid_data = data[:, (seizure[0][0] - delta) * int(sfreq) : (seizure[0][1] + delta) * int(sfreq)]
+        valid_data = data[:, (seizure['seizure_start_time'] - delta) * int(sfreq) : (seizure['seizure_end_time'] + delta) * int(sfreq)]
         slice_datas, label = slice_data(valid_data, int(sfreq), delta, interval, offset, seq_len)        
        
         labels.append(label)
         datas.append(slice_datas)
-        print(f'\n{file_name}\tvalid_data.shape = {valid_data.shape}\tslice_data.shape = {slice_datas.shape}\tlabel.shape = {label.shape}\n')
+        print(f'\n{seizure["file_name"]}\tvalid_data.shape = {valid_data.shape}\tslice_data.shape = {slice_datas.shape}\tlabel.shape = {label.shape}\n')
 
     merged_datas = np.concatenate(datas, axis=0)   
     merged_labels = np.concatenate(labels, axis=0)
     return merged_datas, merged_labels
+
+
+
 
 
 import tensorflow as tf
@@ -167,19 +150,14 @@ def create_lstm_model(seq_len=60, n_channels=23, sfreq=256):
 
 
 def main():
-    # load_edf('data_org/chb01_03.edf')
-
     ############ START FROM HERE ############
     # get seizure intervals
-    # seizure_info = parse_seizure_summary('data_org/chb01-summary.txt')
-    # for seizure in seizure_info:        
-    #     print(f"{seizure['file_name']}: [({seizure['seizure_start_time']} ~ {seizure['seizure_end_time']})]")
-
-    seizure_info = load_seizure_time(seizure_times_path)
-    seizure_info = dict(list(seizure_info.items())[:10])   # get the first 10 patients
+    seizure_info = parse_seizure_summary('data_org/chb01-summary.txt')
+    for seizure in seizure_info:        
+        print(f"{seizure['file_name']}: [({seizure['seizure_start_time']} ~ {seizure['seizure_end_time']})]")
 
     # generate dataset
-    data_dir = 'chb-mit-scalp-eeg-database-1.0.0/'
+    data_dir = 'data_org/'
     merged_datas, merged_labels = generate_dataset(seizure_info, data_dir, delta=100, offset=7, seq_len=60)
     print(f'merged_datas: {merged_datas.shape}\tmerged_labels: {merged_labels.shape}')
 
