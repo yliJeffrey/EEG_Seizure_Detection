@@ -14,6 +14,9 @@ The project uses the [**CHB-MIT Scalp EEG Database**](https://physionet.org/cont
 - Annotated seizure start and end times
 - Data stored in EDF (European Data Format) files
 
+Raw EEG Data (23 Channels)
+![Raw EEG Data (23 Channels)](Raw_EEG_Data.png)
+
 ## Chb01 Dataset (data_org folder)
 All EEG files with seizure from patient chb01 are extracted to the data_org folder for quick testing.
 
