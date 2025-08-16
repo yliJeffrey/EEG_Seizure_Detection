@@ -1,4 +1,4 @@
-# EEG Seizure Detection using Deep Learning
+# EEG Seizure Detection
 
 This project implements deep learning models for automated seizure detection using EEG (Electroencephalogram) data from the CHB-MIT Scalp EEG Database. The project explores various neural network architectures including LSTM, CNN-LSTM hybrids, and EEGNet for temporal seizure pattern recognition.
 
